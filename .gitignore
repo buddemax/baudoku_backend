@@ -1,0 +1,32 @@
+.DS_Store
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.python-version
+.venv/
+venv/
+env/
+
+# Test, lint, and coverage artifacts
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Local scratch files
+tmp/
+*.log
