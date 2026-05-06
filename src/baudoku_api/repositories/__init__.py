@@ -3,6 +3,7 @@ from baudoku_api.repositories.projects import (
     ProjectNotFoundError,
     ProjectRepositoryError,
     ProjectRepositoryProtocol,
+    ReportVersionIncompleteError,
     SupabaseProjectRepository,
 )
 
@@ -11,5 +12,6 @@ __all__ = [
     "ProjectNotFoundError",
     "ProjectRepositoryError",
     "ProjectRepositoryProtocol",
+    "ReportVersionIncompleteError",
     "SupabaseProjectRepository",
 ]

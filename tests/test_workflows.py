@@ -202,6 +202,8 @@ def test_defect_media_plan_report_and_sync_routes() -> None:
     assert plan_export_response.status_code == 200
     assert plan_export_response.json()["download_url"].endswith("_markiert.jpg")
     assert report_response.status_code == 200
+    assert report_response.json()["version"]["download_url"].endswith("report.docx")
+    assert report_response.json()["version"]["pdf_download_url"].endswith("report.pdf")
     assert confirm_preview_response.status_code == 200
     assert sync_pull_response.json()["tombstones"] == []
     assert link_delete_response.status_code == 204

@@ -1,4 +1,5 @@
 from baudoku_api.reports.docx_builder import ReportDocxBuilder, ReportDocxBuilderError
+from baudoku_api.reports.pdf_builder import ReportPdfBuilder, ReportPdfBuilderError
 from baudoku_api.reports.plan_render import (
     PlanImageRenderResult,
     PlanRenderError,
@@ -22,6 +23,8 @@ __all__ = [
     "PlanRenderUnsupportedError",
     "ReportDocxBuilder",
     "ReportDocxBuilderError",
+    "ReportPdfBuilder",
+    "ReportPdfBuilderError",
     "plan_export_fingerprint",
     "render_annotated_plan",
     "render_annotated_plan_image",

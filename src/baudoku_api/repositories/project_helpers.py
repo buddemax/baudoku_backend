@@ -6,7 +6,7 @@ from typing import Any, Optional
 from baudoku_api.schemas import ReportWarning
 
 PROJECT_FILES_BUCKET = "project-files"
-REPORT_TEMPLATE_VERSION = "simple-v1"
+REPORT_TEMPLATE_VERSION = "bba-report-v2"
 SYNC_OPERATION_EVENT_TYPE = "sync.operation_applied"
 
 SYNC_ENTITY_TYPE_BY_OPERATION = {
@@ -61,6 +61,10 @@ class MediaUploadIntegrityError(ProjectRepositoryError):
 
 class ProjectNotFoundError(ProjectRepositoryError):
     """Raised when a project is missing or not visible to the current user."""
+
+
+class ReportVersionIncompleteError(ProjectRepositoryError):
+    """Raised when an existing report version cannot be delivered completely."""
 
 
 class SyncConflictError(ProjectRepositoryError):
@@ -151,10 +155,13 @@ def _extension_for(media_type: str, mime_type: str, file_name: Optional[str]) ->
     }
     if mime_type in mime_map:
         return mime_map[mime_type]
-    return {"photo": "jpg", "audio": "m4a", "plan_source": "pdf", "plan_render": "png"}.get(
-        media_type,
-        "bin",
-    )
+    return {
+        "photo": "jpg",
+        "audio": "m4a",
+        "plan_source": "pdf",
+        "plan_render": "png",
+        "report_pdf": "pdf",
+    }.get(media_type, "bin")
 
 
 def _text(value: object) -> str:

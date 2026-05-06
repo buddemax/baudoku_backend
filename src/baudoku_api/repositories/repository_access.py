@@ -23,8 +23,7 @@ from baudoku_api.repositories.project_helpers import (
 
 logger = logging.getLogger(__name__)
 PLAN_RENDER_WARNING = (
-    "Planbild konnte nicht fuer den Bericht gerendert werden. "
-    "Marker werden darunter nur als Liste ausgegeben."
+    "Planbild konnte nicht fuer den Bericht gerendert werden."
 )
 
 
@@ -51,6 +50,10 @@ class ProjectRepositoryAccessMixin:
             "mime_types": {
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             },
+        },
+        "report_pdf": {
+            "folder": "reports",
+            "mime_types": {"application/pdf"},
         },
     }
 
@@ -762,14 +765,19 @@ class ProjectRepositoryAccessMixin:
             enriched["signed_url"] = None
         return enriched
 
-    def _signed_download_url(self, storage_path: str, download_name: Optional[str] = None) -> str:
+    def _signed_download_url(
+        self,
+        storage_path: str,
+        download_name: Optional[str] = None,
+        expires_in_seconds: int = 600,
+    ) -> str:
         try:
             options: dict[str, Any] = {}
             if download_name:
                 options["download"] = download_name
             response = self._client.storage.from_(PROJECT_FILES_BUCKET).create_signed_url(
                 storage_path,
-                600,
+                expires_in_seconds,
                 options or None,
             )
         except Exception as exc:  # pragma: no cover - storage exception surface

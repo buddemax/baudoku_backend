@@ -8,7 +8,7 @@ from typing import Any, Literal, Optional
 PLAN_RENDER_MEDIA_TYPE = "plan_render"
 PLAN_RENDER_MIME_TYPE = "image/png"
 PLAN_RENDER_FILE_EXTENSION = "png"
-MARKER_TARGET_DIAMETER_INCHES = 0.52
+MARKER_TARGET_DIAMETER_INCHES = 0.30
 MARKER_TARGET_WORD_WIDTH_INCHES = 6.5
 
 
@@ -155,14 +155,14 @@ def _draw_marker(
     target_radius = int(
         round(width * MARKER_TARGET_DIAMETER_INCHES / (2 * MARKER_TARGET_WORD_WIDTH_INCHES))
     )
-    badge_radius = max(22, target_radius)
-    badge_radius = min(badge_radius, max(22, int(round(min(width, height) * 0.18))))
+    badge_radius = max(13, target_radius)
+    badge_radius = min(badge_radius, max(13, int(round(min(width, height) * 0.10))))
     text = _text(label)
     max_badge_width = max(2, min(width - 2, max(badge_radius * 2, int(round(width * 0.42)))))
-    font_size = max(14, int(round(badge_radius * 0.92)))
+    font_size = max(13, int(round(badge_radius * 1.22)))
     badge_font = _badge_font(font, font_size)
     text_width, text_height = _text_size(draw, text, badge_font) if text else (0, 0)
-    padding_x = max(9, badge_radius // 2)
+    padding_x = max(5, badge_radius // 3)
     while text and text_width + padding_x * 2 > max_badge_width and font_size > 8:
         font_size -= 1
         badge_font = _badge_font(font, font_size)
@@ -175,7 +175,7 @@ def _draw_marker(
     half_height = badge_height // 2
     x = max(half_width, min(width - half_width - 1, x))
     y = max(half_height, min(height - half_height - 1, y))
-    outline_width = max(3, badge_radius // 5)
+    outline_width = max(2, badge_radius // 6)
 
     badge_bounds = (
         x - half_width,
@@ -193,7 +193,7 @@ def _draw_marker(
 
     if text:
         text_x = x - text_width / 2
-        text_y = y - text_height / 2 - max(1, badge_radius // 12)
+        text_y = y - text_height / 2 - max(1, badge_radius // 16)
         draw.text(
             (text_x, text_y),
             text,

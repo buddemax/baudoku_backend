@@ -1,17 +1,32 @@
 from __future__ import annotations
 
-from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from baudoku_api.reports.plan_render import resolve_marker_label, resolve_marker_reference
+from baudoku_api.reports.image_processing import process_report_image
+from baudoku_api.reports.letterhead import (
+    BBA_BLUE,
+    BBA_TEXT,
+    CONTACT_COLUMNS,
+    logo_bytes_from_template,
+)
+from baudoku_api.reports.report_content import (
+    ReportContent,
+    ReportImage,
+    build_report_content,
+)
 
 
 ImageLoader = Callable[[str], bytes]
 
 DEFAULT_TEMPLATE_PATH = Path(__file__).resolve().parents[3] / "templates" / "bba_briefbogen.docx"
-PLAN_IMAGE_WIDTH_INCHES = 6.5
+PHOTO_MAX_LONG_EDGE_PX = 1800
+PHOTO_MAX_WIDTH_INCHES = 4.5
+PHOTO_MAX_HEIGHT_INCHES = 3.8
+PLAN_MAX_LONG_EDGE_PX = 2400
+PLAN_MAX_WIDTH_INCHES = 6.5
+PLAN_MAX_HEIGHT_INCHES = 7.2
 
 
 class ReportDocxBuilderError(Exception):
@@ -36,14 +51,9 @@ class ReportDocxBuilder:
         plans: Optional[list[dict[str, Any]]] = None,
     ) -> bytes:
         document = self._document_from_template()
-        self._configure_styles(document)
-
-        document.add_heading("BBA Baubegehungsbericht", 0)
-        self._add_project_header(document, project)
-        self._add_general_findings(document, general_findings)
-        self._add_defects(document, defects)
-        self._add_plans(document, plans or [], defects)
-        self._add_conclusion(document, project_conclusion)
+        self._prepare_document(document)
+        content = build_report_content(project, defects, general_findings, project_conclusion, plans)
+        self._build_content(document, content)
 
         buffer = BytesIO()
         document.save(buffer)
@@ -77,224 +87,355 @@ class ReportDocxBuilder:
             f"Briefbogen-Template fehlt. Erwarteter Fallback: {DEFAULT_TEMPLATE_PATH}"
         )
 
+    def _prepare_document(self, document: Any) -> None:
+        self._clear_body(document)
+        self._configure_page(document)
+        self._configure_styles(document)
+        self._configure_letterhead(document)
+
+    def _build_content(self, document: Any, content: ReportContent) -> None:
+        document.add_paragraph(content.title, style="Title")
+        self._add_project_header(document, content)
+        self._add_general_findings(document, content)
+        self._add_defects(document, content)
+        self._add_plans(document, content)
+        if content.conclusion:
+            document.add_heading("Fazit", level=1)
+            document.add_paragraph(content.conclusion)
+
+    def _clear_body(self, document: Any) -> None:
+        from docx.oxml.ns import qn
+
+        body = document._body._element
+        for child in list(body):
+            if child.tag != qn("w:sectPr"):
+                body.remove(child)
+
+    def _configure_page(self, document: Any) -> None:
+        from docx.shared import Mm
+
+        section = document.sections[0]
+        section.page_width = Mm(210)
+        section.page_height = Mm(297)
+        section.left_margin = Mm(17.5)
+        section.right_margin = Mm(7.5)
+        section.top_margin = Mm(42)
+        section.bottom_margin = Mm(36)
+        section.header_distance = Mm(8)
+        section.footer_distance = Mm(7.2)
+        section.different_first_page_header_footer = True
+
     def _configure_styles(self, document: Any) -> None:
+        from docx.enum.style import WD_STYLE_TYPE
+        from docx.shared import Pt, RGBColor
+
+        normal = document.styles["Normal"]
+        normal.font.name = "Arial"
+        normal.font.size = Pt(10)
+        normal.paragraph_format.space_after = Pt(5)
+        normal.paragraph_format.line_spacing = 1.08
+
+        title = document.styles["Title"]
+        title.font.name = "Arial"
+        title.font.size = Pt(18)
+        title.font.bold = True
+        title.font.color.rgb = RGBColor.from_string(BBA_TEXT)
+        title.paragraph_format.space_after = Pt(12)
+
+        for style_name, size, before, after in (
+            ("Heading 1", 14, 12, 6),
+            ("Heading 2", 12, 9, 4),
+            ("Heading 3", 10.5, 7, 3),
+        ):
+            style = document.styles[style_name]
+            style.font.name = "Arial"
+            style.font.bold = True
+            style.font.size = Pt(size)
+            style.font.color.rgb = RGBColor.from_string(BBA_TEXT)
+            style.paragraph_format.space_before = Pt(before)
+            style.paragraph_format.space_after = Pt(after)
+
         try:
-            from docx.shared import Pt
-        except Exception as exc:  # pragma: no cover - optional dependency surface
-            raise ReportDocxBuilderError("python-docx ist nicht installiert.") from exc
+            caption = document.styles["BBA Caption"]
+        except KeyError:
+            caption = document.styles.add_style("BBA Caption", WD_STYLE_TYPE.PARAGRAPH)
+        caption.font.name = "Arial"
+        caption.font.size = Pt(8)
+        caption.font.italic = True
+        caption.font.color.rgb = RGBColor(85, 85, 85)
+        caption.paragraph_format.space_after = Pt(8)
 
-        normal_style = document.styles["Normal"]
-        normal_style.font.name = "Arial"
-        normal_style.font.size = Pt(10)
+    def _configure_letterhead(self, document: Any) -> None:
+        for header in (document.sections[0].first_page_header, document.sections[0].header):
+            self._build_header(header)
+        for footer in (document.sections[0].first_page_footer, document.sections[0].footer):
+            self._build_footer(footer)
 
-    def _add_project_header(self, document: Any, project: dict[str, Any]) -> None:
-        document.add_paragraph(f"Projektnummer: {_text(project.get('project_number'))}")
-        document.add_paragraph(f"Auftraggeber: {_text(project.get('client_name'))}")
-        document.add_paragraph(f"Objektadresse: {_text(project.get('object_address'))}")
-        document.add_paragraph(f"Datum: {_format_date(project.get('site_visit_date'))}")
-        document.add_paragraph(f"Bearbeiter: {_project_author(project)}")
-        document.add_paragraph(f"Gutachtentyp: {_text(project.get('appraisal_type'))}")
+    def _build_header(self, header: Any) -> None:
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.shared import Mm, Pt
 
-    def _add_general_findings(
-        self, document: Any, general_findings: list[dict[str, Any]]
-    ) -> None:
+        _clear_block_container(header)
+        logo = logo_bytes_from_template(self._resolved_template_path())
+        logo_paragraph = header.add_paragraph()
+        logo_paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        logo_paragraph.paragraph_format.space_after = Pt(5)
+        run = logo_paragraph.add_run()
+        if logo:
+            run.add_picture(BytesIO(logo), width=Mm(52.6))
+        else:
+            run.bold = True
+            run.text = "BBA GmbH"
+
+        line = header.add_paragraph()
+        line.paragraph_format.space_after = Pt(0)
+        _set_paragraph_bottom_border(line, BBA_BLUE, size="4")
+
+    def _build_footer(self, footer: Any) -> None:
+        from docx.shared import Mm, Pt
+
+        _clear_block_container(footer)
+        line = footer.add_paragraph()
+        line.paragraph_format.space_after = Pt(3)
+        _set_paragraph_bottom_border(line, BBA_BLUE, size="4")
+
+        table = footer.add_table(rows=1, cols=4, width=Mm(185))
+        table.autofit = False
+        _clear_table_borders(table)
+        widths = [Mm(46.25)] * 4
+        for column_index, (heading, lines) in enumerate(CONTACT_COLUMNS):
+            cell = table.cell(0, column_index)
+            _set_cell_width(cell, widths[column_index])
+            paragraph = cell.paragraphs[0]
+            paragraph.paragraph_format.space_after = Pt(0)
+            run = paragraph.add_run(heading)
+            run.bold = True
+            run.font.name = "Arial"
+            run.font.size = Pt(7)
+            for line_text in lines:
+                paragraph.add_run().add_break()
+                line_run = paragraph.add_run(line_text)
+                line_run.font.name = "Arial"
+                line_run.font.size = Pt(7)
+
+    def _add_project_header(self, document: Any, content: ReportContent) -> None:
+        from docx.shared import Inches, Pt
+
+        table = document.add_table(rows=len(content.project_fields), cols=2)
+        table.style = "Table Grid"
+        table.autofit = False
+        _set_table_width(table, Inches(7.28))
+        _set_table_borders(table, color="D6DCE2", size="4")
+        for row, (label, value) in zip(table.rows, content.project_fields):
+            _set_cell_width(row.cells[0], Inches(1.55))
+            _set_cell_width(row.cells[1], Inches(5.73))
+            row.cells[0].text = label
+            row.cells[1].text = value or "Nicht angegeben"
+            for paragraph in row.cells[0].paragraphs:
+                paragraph.runs[0].bold = True
+            for cell_index, cell in enumerate(row.cells):
+                _set_cell_shading(cell, "F3F7FA" if cell_index == 0 else "FFFFFF")
+                _set_cell_margins(cell, top=80, bottom=80, start=120, end=120)
+                for paragraph in cell.paragraphs:
+                    paragraph.paragraph_format.space_after = Pt(0)
+
+        document.add_paragraph()
+
+    def _add_general_findings(self, document: Any, content: ReportContent) -> None:
         document.add_heading("Allgemeine Feststellungen", level=1)
-        if not general_findings:
+        if not content.general_findings:
             document.add_paragraph("Es wurden noch keine allgemeinen Feststellungen erfasst.")
             return
 
-        for finding in _sorted_items(general_findings, "sort_order"):
-            finding_text = _text(finding.get("text"))
-            if finding_text:
-                document.add_paragraph(finding_text, style="List Bullet")
+        for finding in content.general_findings:
+            paragraph = document.add_paragraph(finding, style="List Bullet")
+            paragraph.paragraph_format.space_after = 0
 
-    def _add_defects(self, document: Any, defects: list[dict[str, Any]]) -> None:
-        document.add_heading("M\u00e4ngel und Hinweise", level=1)
-        if not defects:
-            document.add_paragraph("Es wurden noch keine M\u00e4ngel oder Hinweise erfasst.")
+    def _add_defects(self, document: Any, content: ReportContent) -> None:
+        document.add_heading("Mängel und Hinweise", level=1)
+        if not content.defects:
+            document.add_paragraph("Es wurden noch keine Mängel oder Hinweise erfasst.")
             return
 
-        for index, defect in enumerate(_sorted_items(defects, "report_sort_order"), start=1):
-            kind = "Mangel" if defect.get("kind") == "defect" else "Hinweis"
-            label = _defect_label(defect, index, kind)
-            document.add_heading(f"{label} - {kind}", level=2)
-            if defect.get("trade_name_snapshot"):
-                document.add_paragraph(f"Gewerk: {_text(defect.get('trade_name_snapshot'))}")
-            if defect.get("category"):
-                document.add_paragraph(f"Kategorie: {_text(defect.get('category'))}")
-            document.add_paragraph(_text(defect.get("description")))
-            self._add_defect_photos(document, defect)
+        for defect in content.defects:
+            document.add_heading(f"{defect.label} - {defect.kind}", level=2)
+            if defect.trade:
+                document.add_paragraph(f"Gewerk: {defect.trade}")
+            if defect.category:
+                document.add_paragraph(f"Kategorie: {defect.category}")
+            document.add_paragraph(defect.description or "Ohne Beschreibung")
+            if defect.photos:
+                document.add_heading("Fotos", level=3)
+            for photo in defect.photos:
+                self._add_image_block(document, photo)
 
-    def _add_defect_photos(self, document: Any, defect: dict[str, Any]) -> None:
-        photos = [
-            link
-            for link in _sorted_items(defect.get("media_links") or [], "sort_order")
-            if link.get("include_in_report") is not False
-            and (link.get("media_asset") or {}).get("media_type") == "photo"
-        ]
-        if not photos:
-            return
-
-        document.add_heading("Fotos", level=3)
-        for index, link in enumerate(photos, start=1):
-            media = link.get("media_asset") or {}
-            storage_path = _text(media.get("storage_path"))
-            caption = _text(media.get("caption")) or "Ohne Bildunterschrift"
-            self._try_add_picture(document, storage_path)
-            document.add_paragraph(f"Foto {index}: {caption}")
-
-    def _try_add_picture(self, document: Any, storage_path: str, width_inches: float = 4.5) -> None:
-        if not self.image_loader or not storage_path:
-            return
-
-        try:
-            from docx.shared import Inches
-        except Exception as exc:  # pragma: no cover - optional dependency surface
-            raise ReportDocxBuilderError("python-docx ist nicht installiert.") from exc
-
-        try:
-            document.add_picture(BytesIO(self.image_loader(storage_path)), width=Inches(width_inches))
-        except Exception:
-            document.add_paragraph(f"Bild konnte nicht eingebettet werden: {storage_path}")
-
-    def _add_plans(
-        self,
-        document: Any,
-        plans: list[dict[str, Any]],
-        defects: list[dict[str, Any]],
-    ) -> None:
-        if not plans:
+    def _add_plans(self, document: Any, content: ReportContent) -> None:
+        if not content.plans:
             return
 
         document.add_heading("Planverortung", level=1)
-        for plan in plans:
-            document.add_heading(_text(plan.get("name")) or "Plan", level=2)
-            media = plan.get("media_asset") or {}
-            if media.get("media_type") in {"photo", "plan_render"}:
-                self._try_add_picture(
+        for plan in content.plans:
+            document.add_heading(plan.name, level=2)
+            if plan.storage_path:
+                self._add_image_block(
                     document,
-                    _text(media.get("storage_path")),
-                    width_inches=PLAN_IMAGE_WIDTH_INCHES,
+                    ReportImage(
+                        storage_path=plan.storage_path,
+                        caption=f"Plan {plan.name}: markierte Verortung",
+                        label="",
+                        kind="plan",
+                    ),
                 )
-            render_error = _text(plan.get("render_error"))
-            if render_error:
-                document.add_paragraph(render_error)
-            self._add_plan_markers(document, plan.get("markers") or [], defects)
+            if plan.render_error:
+                document.add_paragraph(plan.render_error)
 
-    def _add_plan_markers(
-        self,
-        document: Any,
-        markers: list[dict[str, Any]],
-        defects: list[dict[str, Any]],
-    ) -> None:
-        if not markers:
-            document.add_paragraph("Keine Marker fuer diesen Plan erfasst.")
+    def _add_image_block(self, document: Any, image: ReportImage) -> None:
+        if not self.image_loader or not image.storage_path:
             return
 
-        defects_by_id = {str(defect.get("id")): defect for defect in defects}
-        for index, marker in enumerate(markers, start=1):
-            defect = defects_by_id.get(str(marker.get("defect_id")))
-            marker_label = resolve_marker_label(marker, defect, str(index)) or str(index)
-            marker_reference = resolve_marker_reference(marker, defect)
-            kind = _defect_kind_label(defect)
-            description = _text((defect or {}).get("description")) or "Ohne Beschreibung"
-            details = _marker_details(marker, defect, marker_reference)
-            document.add_paragraph(
-                f"Marker {marker_label} - {kind}: {description}"
-                + (f" ({'; '.join(details)})" if details else ""),
-                style="List Bullet",
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.shared import Inches
+
+        max_long_edge = PLAN_MAX_LONG_EDGE_PX if image.kind == "plan" else PHOTO_MAX_LONG_EDGE_PX
+        max_width = PLAN_MAX_WIDTH_INCHES if image.kind == "plan" else PHOTO_MAX_WIDTH_INCHES
+        max_height = PLAN_MAX_HEIGHT_INCHES if image.kind == "plan" else PHOTO_MAX_HEIGHT_INCHES
+        try:
+            processed = process_report_image(
+                self.image_loader(image.storage_path),
+                max_long_edge_px=max_long_edge,
+                max_width_inches=max_width,
+                max_height_inches=max_height,
             )
+        except Exception:
+            document.add_paragraph(f"Bild konnte nicht eingebettet werden: {image.storage_path}")
+            return
 
-    def _add_conclusion(
-        self, document: Any, project_conclusion: Optional[dict[str, Any]]
-    ) -> None:
-        document.add_heading("Fazit", level=1)
-        conclusion_text = _text((project_conclusion or {}).get("text"))
-        if conclusion_text:
-            document.add_paragraph(conclusion_text)
-        else:
-            document.add_paragraph("Es wurde noch kein Fazit erfasst.")
-
-
-def _text(value: object) -> str:
-    return str(value or "").strip()
-
-
-def _format_date(value: object) -> str:
-    if isinstance(value, datetime):
-        return value.date().isoformat()
-    if isinstance(value, date):
-        return value.isoformat()
-    return _text(value)
+        picture_paragraph = document.add_paragraph()
+        picture_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        picture_paragraph.paragraph_format.keep_with_next = True
+        run = picture_paragraph.add_run()
+        run.add_picture(
+            BytesIO(processed.content),
+            width=Inches(processed.display_width_inches),
+            height=Inches(processed.display_height_inches),
+        )
+        caption_paragraph = document.add_paragraph(style="BBA Caption")
+        caption_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        caption_paragraph.paragraph_format.keep_together = True
+        caption_paragraph.add_run(f"{image.label + ': ' if image.label else ''}{image.caption}")
 
 
-def _project_author(project: dict[str, Any]) -> str:
-    for key in (
-        "lead_user_display_name",
-        "lead_user_name",
-        "created_by_display_name",
-        "author_display_name",
-        "bearbeiter",
-    ):
-        value = _text(project.get(key))
-        if value:
-            return value
-    return "Nicht angegeben"
+def _clear_block_container(container: Any) -> None:
+    for paragraph in list(container.paragraphs):
+        paragraph._element.getparent().remove(paragraph._element)
+    for table in list(container.tables):
+        table._element.getparent().remove(table._element)
 
 
-def _defect_label(defect: dict[str, Any], index: int, kind: str) -> str:
-    for key in ("local_label", "label"):
-        value = _text(defect.get(key))
-        if value:
-            return value
-    report_number = _text(defect.get("report_number"))
-    if report_number:
-        return f"{kind} {report_number}"
-    return f"Position {index}"
+def _set_paragraph_bottom_border(paragraph: Any, color: str, size: str = "4") -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    p_pr = paragraph._p.get_or_add_pPr()
+    p_bdr = p_pr.find(qn("w:pBdr"))
+    if p_bdr is None:
+        p_bdr = OxmlElement("w:pBdr")
+        p_pr.append(p_bdr)
+    bottom = OxmlElement("w:bottom")
+    bottom.set(qn("w:val"), "single")
+    bottom.set(qn("w:sz"), size)
+    bottom.set(qn("w:space"), "1")
+    bottom.set(qn("w:color"), color)
+    p_bdr.append(bottom)
 
 
-def _defect_kind_label(defect: Optional[dict[str, Any]]) -> str:
-    if not defect:
-        return "Unbekannter Eintrag"
-    return "Mangel" if defect.get("kind") == "defect" else "Hinweis"
+def _clear_table_borders(table: Any) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    tbl_pr = table._tbl.tblPr
+    borders = tbl_pr.first_child_found_in("w:tblBorders")
+    if borders is not None:
+        tbl_pr.remove(borders)
+    borders = OxmlElement("w:tblBorders")
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        element = OxmlElement(f"w:{edge}")
+        element.set(qn("w:val"), "nil")
+        borders.append(element)
+    tbl_pr.append(borders)
 
 
-def _marker_details(
-    marker: dict[str, Any],
-    defect: Optional[dict[str, Any]],
-    marker_reference: str,
-) -> list[str]:
-    defect = defect or {}
-    details = []
-    if marker_reference:
-        details.append(f"Arbeitsnummer {marker_reference}")
-    trade = _text(defect.get("trade_name_snapshot"))
-    if trade:
-        details.append(f"Gewerk {trade}")
-    category = _text(defect.get("category"))
-    if category:
-        details.append(f"Kategorie {category}")
-    details.append(f"Seite {_text(marker.get('page_number')) or '1'}")
-    details.append(f"X {_percent(marker.get('x_norm'))}%")
-    details.append(f"Y {_percent(marker.get('y_norm'))}%")
-    return details
+def _set_table_borders(table: Any, color: str, size: str = "4") -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    tbl_pr = table._tbl.tblPr
+    borders = tbl_pr.first_child_found_in("w:tblBorders")
+    if borders is not None:
+        tbl_pr.remove(borders)
+    borders = OxmlElement("w:tblBorders")
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        element = OxmlElement(f"w:{edge}")
+        element.set(qn("w:val"), "single")
+        element.set(qn("w:sz"), size)
+        element.set(qn("w:space"), "0")
+        element.set(qn("w:color"), color)
+        borders.append(element)
+    tbl_pr.append(borders)
 
 
-def _sorted_items(items: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
-    return sorted(items, key=lambda item: _sort_value(item.get(key)))
+def _set_table_width(table: Any, width: Any) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    tbl_pr = table._tbl.tblPr
+    tbl_w = tbl_pr.first_child_found_in("w:tblW")
+    if tbl_w is None:
+        tbl_w = OxmlElement("w:tblW")
+        tbl_pr.append(tbl_w)
+    tbl_w.set(qn("w:w"), str(width.twips))
+    tbl_w.set(qn("w:type"), "dxa")
 
 
-def _sort_value(value: object) -> tuple[int, float]:
-    if value in (None, ""):
-        return (1, 0)
-    try:
-        return (0, float(value))
-    except (TypeError, ValueError):
-        return (0, 0)
+def _set_cell_width(cell: Any, width: Any) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    tc_pr = cell._tc.get_or_add_tcPr()
+    tc_w = tc_pr.first_child_found_in("w:tcW")
+    if tc_w is None:
+        tc_w = OxmlElement("w:tcW")
+        tc_pr.append(tc_w)
+    tc_w.set(qn("w:w"), str(width.twips))
+    tc_w.set(qn("w:type"), "dxa")
+    cell.width = width
 
 
-def _percent(value: object) -> int:
-    try:
-        return round(float(value or 0) * 100)
-    except (TypeError, ValueError):
-        return 0
+def _set_cell_shading(cell: Any, fill: str) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    tc_pr = cell._tc.get_or_add_tcPr()
+    shading = tc_pr.first_child_found_in("w:shd")
+    if shading is None:
+        shading = OxmlElement("w:shd")
+        tc_pr.append(shading)
+    shading.set(qn("w:fill"), fill)
+
+
+def _set_cell_margins(cell: Any, **margins: int) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    tc_pr = cell._tc.get_or_add_tcPr()
+    tc_mar = tc_pr.first_child_found_in("w:tcMar")
+    if tc_mar is None:
+        tc_mar = OxmlElement("w:tcMar")
+        tc_pr.append(tc_mar)
+    for margin, value in margins.items():
+        node = tc_mar.find(qn(f"w:{margin}"))
+        if node is None:
+            node = OxmlElement(f"w:{margin}")
+            tc_mar.append(node)
+        node.set(qn("w:w"), str(value))
+        node.set(qn("w:type"), "dxa")

@@ -12,6 +12,11 @@ from baudoku_api.auth import (
     SupabaseAuthService,
 )
 from baudoku_api.domain import AuthenticatedUser
+from baudoku_api.email_delivery import (
+    BrevoEmailSender,
+    EmailDeliveryConfigurationError,
+    EmailSenderProtocol,
+)
 from baudoku_api.rate_limit import InMemoryRateLimiter, RateLimiterProtocol
 from baudoku_api.repositories import ProjectRepositoryProtocol, SupabaseProjectRepository
 from baudoku_api.config import get_settings
@@ -36,6 +41,19 @@ def get_ai_provider() -> AiProviderProtocol:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
                 "code": "AI_NOT_CONFIGURED",
+                "message": str(exc),
+            },
+        ) from exc
+
+
+def get_email_sender() -> EmailSenderProtocol:
+    try:
+        return BrevoEmailSender(get_settings())
+    except EmailDeliveryConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "EMAIL_NOT_CONFIGURED",
                 "message": str(exc),
             },
         ) from exc

@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     gemini_api_key: Optional[str] = None
     gemini_text_model: str = "gemini-2.5-flash"
     bba_template_path: Optional[str] = None
+    brevo_api_key: Optional[str] = None
+    brevo_sender_email: Optional[str] = None
+    brevo_sender_name: Optional[str] = None
+    brevo_sandbox: bool = False
+    brevo_max_inline_attachment_raw_bytes: int = 14_000_000
+    brevo_link_expiry_seconds: int = 604_800
+    brevo_timeout_seconds: int = 20
 
     model_config = SettingsConfigDict(
         env_file=(".env", ".env.local"),
