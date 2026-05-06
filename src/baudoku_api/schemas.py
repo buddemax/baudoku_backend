@@ -109,6 +109,9 @@ class MediaInitUploadRequest(BaseModel):
     media_type: MediaType
     mime_type: str = Field(min_length=1)
     file_name: Optional[str] = None
+    client_id: Optional[str] = None
+    media_id: Optional[UUID] = None
+    storage_path: Optional[str] = Field(default=None, min_length=1)
 
 
 class MediaInitUploadResponse(BaseModel):

@@ -129,18 +129,23 @@ def _draw_pdf_marker(page: Any, marker: dict[str, Any], label: str) -> None:
     x = rect.x0 + normalized_coordinate(marker.get("x_norm")) * rect.width
     y = rect.y0 + normalized_coordinate(marker.get("y_norm")) * rect.height
     radius = max(
-        8.0,
+        6.0,
         rect.width * MARKER_TARGET_DIAMETER_INCHES / (2 * MARKER_TARGET_WORD_WIDTH_INCHES),
     )
-    radius = min(radius, max(8.0, min(rect.width, rect.height) * 0.045), 28.0)
+    radius = min(radius, max(6.0, min(rect.width, rect.height) * 0.032), 20.0)
     text = _text(label)
-    font_size = max(9.5, radius * 1.2)
+    font_size = max(8.5, radius * 1.45)
     try:
         text_width = fitz.get_text_length(text, fontname="helv", fontsize=font_size)
     except Exception:
         text_width = len(text) * font_size * 0.6
-    badge_width = max(radius * 2, text_width + radius * 0.7)
-    badge_width = min(badge_width, max(radius * 2, rect.width * 0.42))
+    badge_width = radius * 2
+    while text and text_width + radius * 0.35 > badge_width and font_size > 6.0:
+        font_size -= 0.5
+        try:
+            text_width = fitz.get_text_length(text, fontname="helv", fontsize=font_size)
+        except Exception:
+            text_width = len(text) * font_size * 0.6
     badge_height = radius * 2
     half_width = badge_width / 2
     half_height = badge_height / 2

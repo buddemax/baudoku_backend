@@ -144,17 +144,31 @@ class ProjectDefectMediaMixin:
         self, project_id: str, payload: MediaInitUploadRequest, user: AuthenticatedUser
     ) -> dict[str, Any]:
         self._get_project_for_user(project_id, user.id)
-        media_id = str(uuid4())
-        extension = _extension_for(payload.media_type, payload.mime_type, payload.file_name)
-        folder = {
-            "photo": "photos",
-            "audio": "audio",
-            "plan_source": "plans",
-            "plan_render": "plans",
-            "report_docx": "reports",
-            "report_pdf": "reports",
-        }[payload.media_type]
-        storage_path = f"projects/{project_id}/{folder}/{media_id}.{extension}"
+        media_id = str(payload.media_id or uuid4())
+        if payload.storage_path:
+            storage_path = str(payload.storage_path)
+            self._validate_media_upload_payload(
+                project_id,
+                MediaCompleteUploadRequest(
+                    media_id=media_id,
+                    media_type=payload.media_type,
+                    storage_bucket=PROJECT_FILES_BUCKET,
+                    storage_path=storage_path,
+                    mime_type=payload.mime_type,
+                    client_id=payload.client_id,
+                ),
+            )
+        else:
+            extension = _extension_for(payload.media_type, payload.mime_type, payload.file_name)
+            folder = {
+                "photo": "photos",
+                "audio": "audio",
+                "plan_source": "plans",
+                "plan_render": "plans",
+                "report_docx": "reports",
+                "report_pdf": "reports",
+            }[payload.media_type]
+            storage_path = f"projects/{project_id}/{folder}/{media_id}.{extension}"
 
         try:
             signed = self._client.storage.from_(PROJECT_FILES_BUCKET).create_signed_upload_url(
@@ -184,6 +198,14 @@ class ProjectDefectMediaMixin:
             self._validate_existing_media_upload(existing_media, project_id, payload)
             self._verify_completed_storage_upload(project_id, payload)
             return self._with_media_signed_url(existing_media)
+
+        if payload.client_id is not None:
+            existing_client_media = self._select_one("media_assets", "client_id", payload.client_id)
+            if existing_client_media is not None:
+                self._validate_existing_client_media_upload(
+                    existing_client_media, project_id, payload
+                )
+                return self._with_media_signed_url(existing_client_media)
 
         existing_path_media = self._select_one("media_assets", "storage_path", payload.storage_path)
         if existing_path_media is not None:

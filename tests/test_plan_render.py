@@ -136,8 +136,8 @@ def test_render_large_plan_uses_smaller_readable_marker_badge() -> None:
     rendered = Image.open(BytesIO(result.content)).convert("RGBA")
 
     red_pixels = _count_red_pixels(rendered, center=(800, 500), radius=90)
-    assert red_pixels > 2000
-    assert red_pixels < 3600
+    assert red_pixels > 550
+    assert red_pixels < 1100
 
 
 def test_render_high_resolution_plan_scales_badge_for_word_output() -> None:
@@ -162,8 +162,34 @@ def test_render_high_resolution_plan_scales_badge_for_word_output() -> None:
     rendered = Image.open(BytesIO(result.content)).convert("RGBA")
 
     red_pixels = _count_red_pixels(rendered, center=(1500, 900), radius=150)
-    assert red_pixels > 24000
-    assert red_pixels < 32000
+    assert red_pixels > 2500
+    assert red_pixels < 4500
+
+
+def test_render_report_sized_plan_uses_compact_marker_for_three_digit_label() -> None:
+    from PIL import Image
+
+    source_bytes = _image_bytes("PNG", size=(1684, 1191), color=(245, 245, 240))
+    plan = {
+        "file_type": "png",
+        "selected_page": 1,
+        "markers": [
+            {
+                "defect_id": "defect-1",
+                "page_number": 1,
+                "x_norm": 0.5,
+                "y_norm": 0.5,
+            }
+        ],
+    }
+    defects = [{"id": "defect-1", "local_label": "001"}]
+
+    result = render_annotated_plan(plan, source_bytes, defects)
+    rendered = Image.open(BytesIO(result.content)).convert("RGBA")
+    width, height = _red_pixel_bounds(rendered)
+
+    assert 34 <= width <= 44
+    assert 34 <= height <= 44
 
 
 def test_marker_label_uses_exact_work_number_before_report_number() -> None:
@@ -252,10 +278,10 @@ def test_render_pdf_export_keeps_all_pages_and_places_page_markers() -> None:
     second = _render_pdf_page(exported, 1)
     first_red_pixels = _count_red_pixels(first, center=(220, 140), radius=60)
     second_red_pixels = _count_red_pixels(second, center=(110, 210), radius=60)
-    assert first_red_pixels > 550
-    assert first_red_pixels < 1100
-    assert second_red_pixels > 550
-    assert second_red_pixels < 1100
+    assert first_red_pixels > 300
+    assert first_red_pixels < 550
+    assert second_red_pixels > 300
+    assert second_red_pixels < 550
 
 
 def test_plan_export_fingerprint_changes_with_marker_or_label() -> None:
@@ -372,3 +398,15 @@ def _count_red_pixels(image: object, center: tuple[int, int], radius: int) -> in
             if alpha and red > 160 and green < 100 and blue < 100:
                 count += 1
     return count
+
+
+def _red_pixel_bounds(image: object) -> tuple[int, int]:
+    xs = []
+    ys = []
+    for y in range(image.height):
+        for x in range(image.width):
+            red, green, blue, alpha = image.getpixel((x, y))
+            if alpha and red > 160 and green < 100 and blue < 100:
+                xs.append(x)
+                ys.append(y)
+    return max(xs) - min(xs) + 1, max(ys) - min(ys) + 1

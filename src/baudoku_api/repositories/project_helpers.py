@@ -147,6 +147,7 @@ def _extension_for(media_type: str, mime_type: str, file_name: Optional[str]) ->
         "image/jpeg": "jpg",
         "image/jpg": "jpg",
         "image/png": "png",
+        "image/webp": "webp",
         "application/pdf": "pdf",
         "audio/mpeg": "mp3",
         "audio/mp4": "m4a",
@@ -176,10 +177,11 @@ def _plan_source_supports_image_render(plan: dict[str, Any], media: dict[str, An
     mime_type = _text(media.get("mime_type")).casefold()
     if file_type == "pdf" or mime_type == "application/pdf":
         return False
-    return file_type in {"jpg", "jpeg", "png"} or mime_type in {
+    return file_type in {"jpg", "jpeg", "png", "webp"} or mime_type in {
         "image/jpeg",
         "image/jpg",
         "image/png",
+        "image/webp",
     }
 
 
