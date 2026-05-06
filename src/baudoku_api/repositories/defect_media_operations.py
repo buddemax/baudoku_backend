@@ -152,6 +152,7 @@ class ProjectDefectMediaMixin:
             "plan_source": "plans",
             "plan_render": "plans",
             "report_docx": "reports",
+            "report_pdf": "reports",
         }[payload.media_type]
         storage_path = f"projects/{project_id}/{folder}/{media_id}.{extension}"
 

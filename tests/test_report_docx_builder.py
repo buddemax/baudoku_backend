@@ -40,14 +40,20 @@ def test_report_docx_is_valid_zip_and_contains_required_report_text(tmp_path: Pa
     assert any(name.startswith("word/media/") for name in names)
 
     text = _document_text(docx_bytes)
-    assert "BBA Briefbogen Dummy-Template" in text
+    assert "BBA Briefbogen Dummy-Template" not in text
     assert "BBA Baubegehungsbericht" in text
-    assert "Projektnummer: BBA-2026-017" in text
-    assert "Auftraggeber: Muster GmbH" in text
-    assert "Objektadresse: Musterstrasse 1, 15526 Bad Saarow" in text
-    assert "Datum: 2026-05-04" in text
-    assert "Bearbeiter: Max Mustermann" in text
-    assert "Gutachtentyp: Abnahmebegehung" in text
+    assert "Projektnummer" in text
+    assert "BBA-2026-017" in text
+    assert "Auftraggeber" in text
+    assert "Muster GmbH" in text
+    assert "Objektadresse" in text
+    assert "Musterstrasse 1, 15526 Bad Saarow" in text
+    assert "Datum" in text
+    assert "2026-05-04" in text
+    assert "Bearbeiter" in text
+    assert "Max Mustermann" in text
+    assert "Gutachtentyp" in text
+    assert "Abnahmebegehung" in text
     assert "Allgemeine Feststellungen" in text
     assert "Feuchtigkeit im Kellerbereich pruefen." in text
     assert "M\u00e4ngel und Hinweise" in text
@@ -136,14 +142,20 @@ def test_report_docx_embeds_plan_render_after_defect_list(tmp_path: Path) -> Non
     assert sum(name.startswith("word/media/") for name in _zip_names(docx_bytes)) >= 2
     text = _document_text(docx_bytes)
     assert text.index("M\u00e4ngel und Hinweise") < text.index("Planverortung")
+    assert "Fazit" not in text
     assert "Grundriss EG" in text
-    assert "Marker 1 - Mangel: Riss im Putz am Treppenhaus." in text
-    assert "Arbeitsnummer 1" in text
-    assert "Gewerk Putz" in text
-    assert "Kategorie Innen" in text
+    assert "Plan Grundriss EG: markierte Verortung" in text
+    assert "Marker 1 - Mangel: Riss im Putz am Treppenhaus." not in text
+    assert "Arbeitsnummer 1" not in text
+    assert "Gewerk: Putz" in text
+    assert "Kategorie: Innen" in text
+    assert "X 50%" not in text
+    assert "Y 25%" not in text
 
 
-def test_report_docx_preserves_duplicate_markers_and_label_precedence(tmp_path: Path) -> None:
+def test_report_docx_omits_plan_marker_legend_and_duplicate_defect_text(
+    tmp_path: Path,
+) -> None:
     template_path = tmp_path / "template.docx"
     _write_template(template_path)
     builder = ReportDocxBuilder(
@@ -159,7 +171,10 @@ def test_report_docx_preserves_duplicate_markers_and_label_precedence(tmp_path: 
                 "kind": "defect",
                 "local_label": "Mangel 1",
                 "report_number": 1,
-                "description": "Riss im Putz am Treppenhaus.",
+                "description": (
+                    "Riss im Putz am Treppenhaus.\n\n"
+                    "Sprachnotiz vom 05.05.26, 17:38: Beispieltranskript."
+                ),
                 "media_links": [],
             },
             {
@@ -212,10 +227,12 @@ def test_report_docx_preserves_duplicate_markers_and_label_precedence(tmp_path: 
     )
 
     text = _document_text(docx_bytes)
-    assert "Marker A - Mangel: Riss im Putz am Treppenhaus." in text
-    assert text.count("Marker 1 - Mangel: Riss im Putz am Treppenhaus.") == 2
-    assert "Marker 2 - Mangel: Fehlstelle am Sockel." in text
-    assert "Arbeitsnummer 2" in text
+    assert "Marker A - Mangel" not in text
+    assert "Marker 1 - Mangel" not in text
+    assert "Marker 2 - Mangel" not in text
+    assert "Arbeitsnummer 2" not in text
+    assert text.count("Sprachnotiz vom 05.05.26, 17:38") == 1
+    assert text.count("Fehlstelle am Sockel.") == 1
 
 
 def test_report_docx_includes_plan_render_warning(tmp_path: Path) -> None:
@@ -231,10 +248,7 @@ def test_report_docx_includes_plan_render_warning(tmp_path: Path) -> None:
         plans=[
             {
                 "name": "Grundriss EG",
-                "render_error": (
-                    "Planbild konnte nicht fuer den Bericht gerendert werden. "
-                    "Marker werden darunter nur als Liste ausgegeben."
-                ),
+                "render_error": "Planbild konnte nicht fuer den Bericht gerendert werden.",
                 "markers": [
                     {
                         "defect_id": "defect-1",
@@ -249,7 +263,32 @@ def test_report_docx_includes_plan_render_warning(tmp_path: Path) -> None:
 
     text = _document_text(docx_bytes)
     assert "Planbild konnte nicht fuer den Bericht gerendert werden." in text
-    assert "Marker 1 - Mangel: Riss im Putz am Treppenhaus." in text
+    assert "Marker 1 - Mangel: Riss im Putz am Treppenhaus." not in text
+    assert "Keine Marker für diesen Plan erfasst." not in text
+
+
+def test_report_docx_bounds_large_photo_dimensions(tmp_path: Path) -> None:
+    template_path = tmp_path / "template.docx"
+    _write_template(template_path)
+    large_photo = _image_bytes(size=(4000, 3000), color=(180, 120, 80))
+    builder = ReportDocxBuilder(
+        template_path=template_path,
+        image_loader=lambda _storage_path: large_photo,
+    )
+
+    docx_bytes = builder.build(
+        project=_project(),
+        defects=_defects(),
+        general_findings=[],
+        project_conclusion=None,
+        plans=[],
+    )
+
+    extents = _drawing_extents(docx_bytes)
+    assert extents
+    width_emu, height_emu = extents[0]
+    assert width_emu <= int(4.5 * 914400)
+    assert height_emu <= int(3.8 * 914400)
 
 
 def test_default_fallback_template_builds_a_valid_docx() -> None:
@@ -265,8 +304,9 @@ def test_default_fallback_template_builds_a_valid_docx() -> None:
 
     assert "word/document.xml" in _zip_names(docx_bytes)
     text = _document_text(docx_bytes)
-    assert "BBA Briefbogen Dummy-Template" in text
-    assert "Projektnummer: BBA-2026-017" in text
+    assert "BBA Briefbogen Dummy-Template" not in text
+    assert "Projektnummer" in text
+    assert "BBA-2026-017" in text
 
 
 def _write_template(path: Path) -> None:
@@ -353,3 +393,23 @@ def _document_text(docx_bytes: bytes) -> str:
     return "\n".join(
         node.text or "" for node in root.findall(".//w:t", namespace) if node.text
     )
+
+
+def _drawing_extents(docx_bytes: bytes) -> list[tuple[int, int]]:
+    with ZipFile(BytesIO(docx_bytes)) as archive:
+        document_xml = archive.read("word/document.xml")
+
+    root = ElementTree.fromstring(document_xml)
+    namespace = {"wp": "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"}
+    return [
+        (int(node.attrib["cx"]), int(node.attrib["cy"]))
+        for node in root.findall(".//wp:extent", namespace)
+    ]
+
+
+def _image_bytes(size: tuple[int, int], color: tuple[int, int, int]) -> bytes:
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.new("RGB", size, color).save(buffer, format="JPEG", quality=95)
+    return buffer.getvalue()

@@ -16,6 +16,7 @@ from baudoku_api.repositories.project_helpers import (
     MediaUploadIntegrityError,
     ProjectRepositoryError,
 )
+from baudoku_api.repositories.report_generation import _report_storage_path
 from baudoku_api.repositories.projects import SupabaseProjectRepository
 from baudoku_api.schemas import MediaCompleteUploadRequest
 
@@ -34,6 +35,15 @@ def test_defect_local_label_required_migration_backfills_and_constrains() -> Non
     assert "where local_label is null" in sql
     assert "alter column local_label set not null" in sql
     assert "defects_local_label_not_blank" in sql
+
+
+def test_report_storage_path_uses_media_id_to_avoid_retry_collisions() -> None:
+    project_id = str(uuid4())
+    media_id = str(uuid4())
+
+    assert _report_storage_path(project_id, media_id, "docx") == (
+        f"projects/{project_id}/reports/{media_id}.docx"
+    )
 
 
 class _ChainQuery:

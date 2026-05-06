@@ -114,7 +114,7 @@ def test_render_preserves_duplicate_markers_for_same_defect() -> None:
     assert _crop_contains_changed_pixels(rendered, center=(194, 70), base_color=(245, 245, 240))
 
 
-def test_render_large_plan_uses_readable_marker_badge() -> None:
+def test_render_large_plan_uses_smaller_readable_marker_badge() -> None:
     from PIL import Image
 
     source_bytes = _image_bytes("PNG", size=(1600, 1000), color=(245, 245, 240))
@@ -135,7 +135,9 @@ def test_render_large_plan_uses_readable_marker_badge() -> None:
     result = render_annotated_plan(plan, source_bytes, defects)
     rendered = Image.open(BytesIO(result.content)).convert("RGBA")
 
-    assert _count_red_pixels(rendered, center=(800, 500), radius=90) > 6000
+    red_pixels = _count_red_pixels(rendered, center=(800, 500), radius=90)
+    assert red_pixels > 2000
+    assert red_pixels < 3600
 
 
 def test_render_high_resolution_plan_scales_badge_for_word_output() -> None:
@@ -159,7 +161,9 @@ def test_render_high_resolution_plan_scales_badge_for_word_output() -> None:
     result = render_annotated_plan(plan, source_bytes, defects)
     rendered = Image.open(BytesIO(result.content)).convert("RGBA")
 
-    assert _count_red_pixels(rendered, center=(1500, 900), radius=150) > 25000
+    red_pixels = _count_red_pixels(rendered, center=(1500, 900), radius=150)
+    assert red_pixels > 24000
+    assert red_pixels < 32000
 
 
 def test_marker_label_uses_exact_work_number_before_report_number() -> None:
@@ -246,8 +250,12 @@ def test_render_pdf_export_keeps_all_pages_and_places_page_markers() -> None:
     assert exported.page_count == 2
     first = _render_pdf_page(exported, 0)
     second = _render_pdf_page(exported, 1)
-    assert _count_red_pixels(first, center=(220, 140), radius=60) > 3000
-    assert _count_red_pixels(second, center=(110, 210), radius=60) > 3000
+    first_red_pixels = _count_red_pixels(first, center=(220, 140), radius=60)
+    second_red_pixels = _count_red_pixels(second, center=(110, 210), radius=60)
+    assert first_red_pixels > 550
+    assert first_red_pixels < 1100
+    assert second_red_pixels > 550
+    assert second_red_pixels < 1100
 
 
 def test_plan_export_fingerprint_changes_with_marker_or_label() -> None:

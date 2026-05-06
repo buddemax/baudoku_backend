@@ -5,6 +5,7 @@ from typing import Any, Optional, Protocol
 
 from baudoku_api.ai import AiProviderProtocol
 from baudoku_api.domain import AuthenticatedUser
+from baudoku_api.email_delivery import EmailSenderProtocol
 from baudoku_api.schemas import (
     DefectCreate,
     DefectMediaLinkCreate,
@@ -22,6 +23,7 @@ from baudoku_api.schemas import (
     ProjectConclusionUpsert,
     ProjectCreate,
     ProjectUpdate,
+    ReportEmailRequest,
     SyncOperation,
     VoiceNoteCreate,
     VoiceNoteUpdate,
@@ -240,13 +242,24 @@ class ProjectRepositoryProtocol(Protocol):
         """Store that a user confirmed the current report preview."""
 
     def generate_report(self, project_id: str, user: AuthenticatedUser) -> dict[str, Any]:
-        """Generate a DOCX report version."""
+        """Generate DOCX and PDF report versions."""
 
     def list_report_versions(self, project_id: str, user_id: str) -> list[dict[str, Any]]:
         """List generated report versions."""
 
-    def report_download_url(self, version_id: str, user: AuthenticatedUser) -> str:
+    def report_download_url(
+        self, version_id: str, user: AuthenticatedUser, file_format: str = "docx"
+    ) -> str:
         """Create a short-lived download URL for a report version."""
+
+    def email_report_version(
+        self,
+        version_id: str,
+        payload: ReportEmailRequest,
+        user: AuthenticatedUser,
+        email_sender: EmailSenderProtocol,
+    ) -> dict[str, Any]:
+        """Send a generated report version by transactional email."""
 
     def sync_pull(
         self, user_id: str, updated_since: Optional[datetime] = None

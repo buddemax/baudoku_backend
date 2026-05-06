@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import Any, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 AppraisalType = Literal[
@@ -22,7 +22,7 @@ ProjectStatus = Literal[
 ProjectLanguage = Literal["de", "en"]
 DefectKind = Literal["defect", "notice"]
 AiStatus = Literal["open", "suggested", "edited", "confirmed", "error"]
-MediaType = Literal["photo", "audio", "plan_source", "plan_render", "report_docx"]
+MediaType = Literal["photo", "audio", "plan_source", "plan_render", "report_docx", "report_pdf"]
 CaptionStatus = Literal["open", "suggested", "edited", "confirmed", "error"]
 PlanFileType = Literal["jpg", "png", "pdf"]
 PlanExportFormat = Literal["source", "image"]
@@ -498,6 +498,7 @@ class ReportVersionRead(BaseModel):
     project_id: UUID
     version_number: int
     media_asset_id: UUID
+    pdf_media_asset_id: Optional[UUID] = None
     generated_by: UUID
     generated_at: datetime
     warning_count: int
@@ -505,10 +506,59 @@ class ReportVersionRead(BaseModel):
     template_version: Optional[str] = None
     report_revision: Optional[int] = None
     download_url: Optional[str] = None
+    pdf_download_url: Optional[str] = None
 
 
 class ReportVersionListResponse(BaseModel):
     items: list[ReportVersionRead]
+
+
+class EmailRecipient(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    email: str = Field(min_length=3, max_length=320)
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        normalized = value.strip()
+        if any(separator in normalized for separator in ("\r", "\n", ",", ";")):
+            raise ValueError("E-Mail-Adresse ist ungueltig.")
+        if "@" not in normalized or normalized.startswith("@") or normalized.endswith("@"):
+            raise ValueError("E-Mail-Adresse ist ungueltig.")
+        local_part, domain = normalized.rsplit("@", maxsplit=1)
+        if not local_part or "." not in domain or domain.startswith(".") or domain.endswith("."):
+            raise ValueError("E-Mail-Adresse ist ungueltig.")
+        return normalized
+
+
+class ReportEmailRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    to: list[EmailRecipient] = Field(min_length=1, max_length=99)
+    cc: list[EmailRecipient] = Field(default_factory=list, max_length=99)
+    bcc: list[EmailRecipient] = Field(default_factory=list, max_length=99)
+    subject: str = Field(min_length=1, max_length=200)
+    message: str = Field(min_length=1, max_length=20_000)
+    client_send_id: Optional[str] = Field(default=None, min_length=1, max_length=120)
+
+    @model_validator(mode="after")
+    def validate_recipient_count(self) -> "ReportEmailRequest":
+        recipient_count = len(self.to) + len(self.cc) + len(self.bcc)
+        if recipient_count > 99:
+            raise ValueError("Maximal 99 Empfaenger sind erlaubt.")
+        return self
+
+
+class ReportEmailResponse(BaseModel):
+    message_id: str
+    version_id: UUID
+    sent_at: datetime
+    recipient_count: int
+    delivery_mode: Literal["attachments", "links"]
+    attachment_bytes: int
+    link_expires_at: Optional[datetime] = None
 
 
 class SyncOperation(BaseModel):

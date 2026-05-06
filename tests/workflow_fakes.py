@@ -753,12 +753,14 @@ def _report_version(project_id: str) -> dict[str, Any]:
         "project_id": project_id,
         "version_number": 1,
         "media_asset_id": str(uuid4()),
+        "pdf_media_asset_id": str(uuid4()),
         "generated_by": USER_ID,
         "generated_at": NOW,
         "warning_count": 0,
         "warnings_snapshot": [],
-        "template_version": "simple-v1",
+        "template_version": "bba-report-v2",
         "download_url": "https://example.test/report.docx",
+        "pdf_download_url": "https://example.test/report.pdf",
     }
 
 

@@ -1,18 +1,25 @@
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
 
-from baudoku_api.dependencies import get_current_user, get_project_repository
+from baudoku_api.dependencies import get_current_user, get_email_sender, get_project_repository
 from baudoku_api.domain import AuthenticatedUser
+from baudoku_api.email_delivery import (
+    BrevoDeliveryError,
+    EmailDeliveryConfigurationError,
+    EmailDeliveryTimeoutError,
+    EmailSenderProtocol,
+)
 from baudoku_api.repositories import (
     MediaUploadIntegrityError,
     ProjectNotFoundError,
     ProjectRepositoryError,
     ProjectRepositoryProtocol,
+    ReportVersionIncompleteError,
 )
 from baudoku_api.schemas import (
     DefectCreate,
@@ -44,6 +51,8 @@ from baudoku_api.schemas import (
     PlanRead,
     ProjectConclusionRead,
     ProjectConclusionUpsert,
+    ReportEmailRequest,
+    ReportEmailResponse,
     ReportGenerateResponse,
     ReportPreviewResponse,
     ReportPreviewConfirmationRead,
@@ -544,11 +553,61 @@ def list_report_versions(
 @router.get("/report-versions/{version_id}/download")
 def download_report_version(
     version_id: UUID,
+    format: Literal["docx", "pdf"] = Query(default="docx"),
     current_user: AuthenticatedUser = Depends(get_current_user),
     repository: ProjectRepositoryProtocol = Depends(get_project_repository),
 ) -> RedirectResponse:
     try:
-        return RedirectResponse(repository.report_download_url(str(version_id), current_user))
+        return RedirectResponse(
+            repository.report_download_url(str(version_id), current_user, format)
+        )
+    except (ProjectNotFoundError, ProjectRepositoryError, SupabaseConfigurationError) as exc:
+        raise _http_error(exc) from exc
+
+
+@router.post("/report-versions/{version_id}/email", response_model=ReportEmailResponse)
+def email_report_version(
+    version_id: UUID,
+    payload: ReportEmailRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    repository: ProjectRepositoryProtocol = Depends(get_project_repository),
+    email_sender: EmailSenderProtocol = Depends(get_email_sender),
+) -> dict:
+    try:
+        return repository.email_report_version(
+            str(version_id),
+            payload,
+            current_user,
+            email_sender,
+        )
+    except EmailDeliveryConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_error_detail("EMAIL_NOT_CONFIGURED", str(exc)),
+        ) from exc
+    except EmailDeliveryTimeoutError as exc:
+        logger.warning(
+            "Email provider timed out in report email route.",
+            extra={"error_code": "EMAIL_TIMEOUT", "exception_type": exc.__class__.__name__},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=_error_detail("EMAIL_TIMEOUT", str(exc)),
+        ) from exc
+    except BrevoDeliveryError as exc:
+        logger.warning(
+            "Email provider rejected report email.",
+            extra={
+                "error_code": "EMAIL_PROVIDER_ERROR",
+                "provider_status_code": exc.status_code,
+                "provider_code": exc.provider_code,
+                "exception_type": exc.__class__.__name__,
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=_error_detail("EMAIL_PROVIDER_ERROR", str(exc)),
+        ) from exc
     except (ProjectNotFoundError, ProjectRepositoryError, SupabaseConfigurationError) as exc:
         raise _http_error(exc) from exc
 
@@ -582,6 +641,11 @@ def _http_error(exc: Exception) -> HTTPException:
         return HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=_error_detail("NOT_FOUND", str(exc)),
+        )
+    if isinstance(exc, ReportVersionIncompleteError):
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_error_detail("REPORT_VERSION_INCOMPLETE", str(exc)),
         )
     if isinstance(exc, SupabaseConfigurationError):
         logger.warning(
