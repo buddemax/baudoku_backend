@@ -31,7 +31,7 @@ class ProjectRepositoryAccessMixin:
     _MEDIA_UPLOAD_RULES = {
         "photo": {
             "folder": "photos",
-            "mime_types": {"image/jpeg", "image/jpg", "image/png"},
+            "mime_types": {"image/jpeg", "image/jpg", "image/png", "image/webp"},
         },
         "audio": {
             "folder": "audio",
@@ -39,7 +39,7 @@ class ProjectRepositoryAccessMixin:
         },
         "plan_source": {
             "folder": "plans",
-            "mime_types": {"application/pdf", "image/jpeg", "image/jpg", "image/png"},
+            "mime_types": {"application/pdf", "image/jpeg", "image/jpg", "image/png", "image/webp"},
         },
         "plan_render": {
             "folder": "plans",
@@ -284,6 +284,21 @@ class ProjectRepositoryAccessMixin:
             "media_type": str(payload.media_type),
             "storage_bucket": payload.storage_bucket,
             "storage_path": payload.storage_path,
+        }
+        mismatched_fields = [
+            field for field, value in expected.items() if str(existing_media.get(field)) != str(value)
+        ]
+        if mismatched_fields:
+            raise ProjectRepositoryError("Upload ist bereits einer anderen Datei zugeordnet.")
+
+    def _validate_existing_client_media_upload(
+        self, existing_media: dict[str, Any], project_id: str, payload: Any
+    ) -> None:
+        expected = {
+            "project_id": project_id,
+            "media_type": str(payload.media_type),
+            "storage_bucket": PROJECT_FILES_BUCKET,
+            "client_id": str(payload.client_id),
         }
         mismatched_fields = [
             field for field, value in expected.items() if str(existing_media.get(field)) != str(value)

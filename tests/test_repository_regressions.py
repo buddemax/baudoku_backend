@@ -15,10 +15,12 @@ from baudoku_api.repositories.project_helpers import (
     PROJECT_FILES_BUCKET,
     MediaUploadIntegrityError,
     ProjectRepositoryError,
+    _extension_for,
+    _plan_source_supports_image_render,
 )
 from baudoku_api.repositories.report_generation import _report_storage_path
 from baudoku_api.repositories.projects import SupabaseProjectRepository
-from baudoku_api.schemas import MediaCompleteUploadRequest
+from baudoku_api.schemas import MediaCompleteUploadRequest, MediaInitUploadRequest
 
 
 def test_defect_local_label_required_migration_backfills_and_constrains() -> None:
@@ -66,12 +68,20 @@ class _FakeStorageBucket:
     def __init__(self, info: dict[str, Any], content: bytes = b"file-bytes") -> None:
         self.info_payload = info
         self.content = content
+        self.signed_upload_paths: list[str] = []
 
     def info(self, _path: str) -> dict[str, Any]:
         return self.info_payload
 
     def download(self, _path: str) -> bytes:
         return self.content
+
+    def create_signed_upload_url(self, path: str) -> dict[str, str]:
+        self.signed_upload_paths.append(path)
+        return {
+            "token": "fresh-upload-token",
+            "signed_url": f"https://example.test/upload/{path}",
+        }
 
 
 class _FakeStorageClient:
@@ -132,6 +142,8 @@ class _UploadIntegrityRepository(SupabaseProjectRepository):
         if column == "id" and str(self.existing_media.get("id")) == value:
             return self.existing_media
         if column == "storage_path" and str(self.existing_media.get("storage_path")) == value:
+            return self.existing_media
+        if column == "client_id" and str(self.existing_media.get("client_id")) == value:
             return self.existing_media
         return None
 
@@ -317,6 +329,50 @@ def test_validate_media_upload_payload_accepts_project_scoped_photo() -> None:
     )
 
     repository._validate_media_upload_payload(project_id, payload)
+
+
+def test_validate_media_upload_payload_accepts_project_scoped_webp_photo() -> None:
+    repository = SupabaseProjectRepository()
+    project_id = str(uuid4())
+    media_id = uuid4()
+    payload = MediaCompleteUploadRequest(
+        media_id=media_id,
+        media_type="photo",
+        storage_bucket=PROJECT_FILES_BUCKET,
+        storage_path=f"projects/{project_id}/photos/{media_id}.webp",
+        mime_type="image/webp",
+        file_size=123,
+        width=800,
+        height=600,
+    )
+
+    repository._validate_media_upload_payload(project_id, payload)
+
+
+def test_validate_media_upload_payload_accepts_project_scoped_webp_plan_source() -> None:
+    repository = SupabaseProjectRepository()
+    project_id = str(uuid4())
+    media_id = uuid4()
+    payload = MediaCompleteUploadRequest(
+        media_id=media_id,
+        media_type="plan_source",
+        storage_bucket=PROJECT_FILES_BUCKET,
+        storage_path=f"projects/{project_id}/plans/{media_id}.webp",
+        mime_type="image/webp",
+        file_size=123,
+        width=1200,
+        height=900,
+    )
+
+    repository._validate_media_upload_payload(project_id, payload)
+
+
+def test_webp_plan_sources_are_renderable_images() -> None:
+    plan = {"file_type": "webp"}
+    media = {"media_type": "plan_source", "mime_type": "image/webp"}
+
+    assert _extension_for("plan_source", "image/webp", None) == "webp"
+    assert _plan_source_supports_image_render(plan, media)
 
 
 def test_report_plan_render_uses_pdf_preview_as_coordinate_basis() -> None:
@@ -505,6 +561,66 @@ def test_validate_existing_media_upload_is_idempotent_for_same_upload() -> None:
     }
 
     repository._validate_existing_media_upload(existing_media, project_id, payload)
+
+
+def test_init_media_upload_reuses_reserved_upload_path_for_retry() -> None:
+    project_id = str(uuid4())
+    media_id = uuid4()
+    storage_path = f"projects/{project_id}/photos/{media_id}.webp"
+    bucket = _FakeStorageBucket({"metadata": {"size": 123}})
+    repository = _UploadIntegrityRepository(bucket)
+
+    result = repository.init_media_upload(
+        project_id,
+        MediaInitUploadRequest(
+            media_type="photo",
+            mime_type="image/webp",
+            file_name="capture.webp",
+            client_id="pending-photo-1",
+            media_id=media_id,
+            storage_path=storage_path,
+        ),
+        SimpleNamespace(id="user-1"),
+    )
+
+    assert result["media_id"] == str(media_id)
+    assert result["storage_path"] == storage_path
+    assert result["upload_token"] == "fresh-upload-token"
+    assert bucket.signed_upload_paths == [storage_path]
+
+
+def test_complete_media_upload_is_idempotent_by_client_id() -> None:
+    project_id = str(uuid4())
+    existing_media_id = uuid4()
+    retry_media_id = uuid4()
+    existing_media = {
+        "id": str(existing_media_id),
+        "project_id": project_id,
+        "media_type": "photo",
+        "storage_bucket": PROJECT_FILES_BUCKET,
+        "storage_path": f"projects/{project_id}/photos/{existing_media_id}.webp",
+        "mime_type": "image/webp",
+        "client_id": "pending-photo-1",
+    }
+    repository = _UploadIntegrityRepository(
+        _FakeStorageBucket({"metadata": {"size": 321}}),
+        existing_media=existing_media,
+    )
+    payload = MediaCompleteUploadRequest(
+        media_id=retry_media_id,
+        media_type="photo",
+        storage_bucket=PROJECT_FILES_BUCKET,
+        storage_path=f"projects/{project_id}/photos/{retry_media_id}.webp",
+        mime_type="image/webp",
+        file_size=321,
+        client_id="pending-photo-1",
+    )
+
+    media = repository.complete_media_upload(project_id, payload, SimpleNamespace(id="user-1"))
+
+    assert media["id"] == str(existing_media_id)
+    assert media["signed_url"] == "https://example.test/file"
+    assert repository.inserted_media is None
 
 
 def test_validate_existing_media_upload_rejects_cross_project_reuse() -> None:
